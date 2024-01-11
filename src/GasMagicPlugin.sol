@@ -15,10 +15,8 @@ library GasMagicPlugin {
     error DeployError();
 
     enum DEPLOY_KIND {
-        CREATE,
         CREATE2,
-        CREATE2PROXY,
-        CREATE3
+        CREATE
     }
 
     struct Response {
@@ -45,12 +43,15 @@ library GasMagicPlugin {
         } else if (chainid == 31337) {
             factory = address(0x3133700000000000000000000000000000000002);
             if (factory.code.length == 0) {
-                bytes memory factoryCode = vm.readFileBinary("var/factory.bin");
+                address feeManager = address(0x313370000000000000000000000000000000000F);
                 address decompressor = address(0x3133700000000000000000000000000000000001);
+
+                vm.etch(factory, vm.readFileBinary("var/factory.bin"));
+                vm.etch(feeManager, vm.readFileBinary("var/feeManager.bin"));
                 vm.etch(decompressor, vm.readFileBinary("var/decompressor.bin"));
 
-                vm.etch(factory, factoryCode);
-                vm.store(factory, bytes32(uint256(1)), bytes32(uint256(uint160(decompressor))));
+                vm.store(factory, bytes32(uint256(0)), bytes32(uint256(uint160(decompressor))));
+                vm.store(factory, bytes32(uint256(1)), bytes32(uint256(uint160(feeManager))));
             }
         }
 
@@ -90,6 +91,10 @@ library GasMagicPlugin {
     }
 
     function encode(bytes memory input) public returns (bytes memory) {
+        if (block.chainid == 31337) {
+            return input;
+        }
+
         string[] memory headers = new string[](1);
         headers[0] = "Content-Type: application/json";
 
@@ -108,105 +113,63 @@ library GasMagicPlugin {
         return factory.getCreateAddress(deployer, codeHash);
     }
 
-    function getCreate2Address(bytes32 codeHash, bytes32 salt) public returns (address addr, uint256 l1GasCost) {
+    function getCreate2Address(bytes32 codeHash, uint96 salt) public returns (address addr, uint256 l1GasCost) {
         IFactory factory = getFactory();
         return factory.getCreate2Address(codeHash, salt);
     }
 
-    function getCreate2Address(bytes32 salt) public returns (address addr, uint256 l1GasCost) {
-        IFactory factory = getFactory();
-        return factory.getCreate2Address(salt);
+    function bruteSalt(bytes32 codeHash) external returns (address, uint96, uint256) {
+        return _bruteSalt(1e5, codeHash);
     }
 
-    function getCreate3Address(bytes32 salt) public returns (address addr, uint256 l1GasCost) {
-        IFactory factory = getFactory();
-        return factory.getCreate3Address(salt);
-    }
-
-    function bruteSalt(DEPLOY_KIND kind) external returns (address, bytes32, uint256) {
-        return _bruteSalt(1e5, kind, bytes32(0));
-    }
-
-    function bruteSalt(DEPLOY_KIND kind, bytes32 codeHash) external returns (address, bytes32, uint256) {
-        return _bruteSalt(1e5, kind, codeHash);
-    }
-
-    function bruteSalt(uint256 iterations, DEPLOY_KIND kind, bytes32 codeHash)
+    function bruteSalt(uint256 iterations, bytes32 codeHash)
         external
-        returns (address, bytes32, uint256)
+        returns (address, uint96, uint256)
     {
-        return _bruteSalt(iterations, kind, codeHash);
+        return _bruteSalt(iterations, codeHash);
     }
 
     // @notice: for demonstration purpose only: forge using only one CPU core, so computation is slow.
     //          Also, gas limit is not infinity.
-    // @notice: for best performance use OpenCL GPU generator. E.g. <https://github.com/johguse/ERADICATE2>
+    // @notice: for best performance use OpenCL GPU generator. E.g. <https://github.com/0age/create2crunch>
     // @dev: 1e6 iterations can brute 3 zero-bytes for ~30 seconds
-    function _bruteSalt(uint256 iterations, DEPLOY_KIND kind, bytes32 codeHash)
+    function _bruteSalt(uint256 iterations, bytes32 codeHash)
         private
-        returns (address addr, bytes32 salt, uint256 l1GasCost)
+        returns (address addr, uint96 salt, uint256 l1GasCost)
     {
         l1GasCost = 320; // initial value for 20 non-zero bytes according <https://eips.ethereum.org/EIPS/eip-1559>
         uint256 start = vm.unixTime();
         uint256 end = vm.unixTime() + iterations;
-        if (kind == DEPLOY_KIND.CREATE2) {
-            for (uint256 i = start; i <= end;) {
-                bytes32 salt_ = keccak256(abi.encodePacked(i));
-                (address addr_, uint256 cost_) = getCreate2Address(codeHash, salt_);
-                if (cost_ < l1GasCost) {
-                    addr = addr_;
-                    salt = salt_;
-                    l1GasCost = cost_;
-                }
-                unchecked {
-                    ++i;
-                }
+        for (uint256 i = start; i <= end;) {
+            uint96 salt_ = uint96(i);
+            (address addr_, uint256 cost_) = getCreate2Address(codeHash, salt_);
+            if (cost_ < l1GasCost) {
+                addr = addr_;
+                salt = salt_;
+                l1GasCost = cost_;
             }
-        } else if (kind == DEPLOY_KIND.CREATE2PROXY) {
-            for (uint256 i = start; i <= end;) {
-                bytes32 salt_ = keccak256(abi.encodePacked(i));
-                (address addr_, uint256 cost_) = getCreate2Address(salt_);
-                if (cost_ < l1GasCost) {
-                    addr = addr_;
-                    salt = salt_;
-                    l1GasCost = cost_;
-                }
-                unchecked {
-                    ++i;
-                }
-            }
-        } else if (kind == DEPLOY_KIND.CREATE3) {
-            for (uint256 i = start; i <= end;) {
-                bytes32 salt_ = keccak256(abi.encodePacked(i));
-                (address addr_, uint256 cost_) = getCreate3Address(salt_);
-                if (cost_ < l1GasCost) {
-                    addr = addr_;
-                    salt = salt_;
-                    l1GasCost = cost_;
-                }
-                unchecked {
-                    ++i;
-                }
+            unchecked {
+                ++i;
             }
         }
     }
 
     function deploy(bytes memory input, DEPLOY_KIND kind) internal returns (address) {
         bytes memory bytecode = encode(input);
-        return _deploy(bytecode, kind, bytes32(0));
+        return _deploy(bytecode, kind, uint96(0));
     }
 
-    function deploy(bytes memory input, DEPLOY_KIND kind, bytes32 salt) internal returns (address) {
+    function deploy(bytes memory input, DEPLOY_KIND kind, uint96 salt) internal returns (address) {
         bytes memory bytecode = encode(input);
         return _deploy(bytecode, kind, salt);
     }
 
     function deploy(bytes memory input, DEPLOY_KIND kind, bytes memory constructorArgs) internal returns (address) {
         bytes memory bytecode = encode(abi.encodePacked(input, constructorArgs));
-        return _deploy(bytecode, kind, bytes32(0));
+        return _deploy(bytecode, kind, uint96(0));
     }
 
-    function deploy(bytes memory input, DEPLOY_KIND kind, bytes32 salt, bytes memory constructorArgs)
+    function deploy(bytes memory input, DEPLOY_KIND kind, uint96 salt, bytes memory constructorArgs)
         internal
         returns (address)
     {
@@ -214,21 +177,29 @@ library GasMagicPlugin {
         return _deploy(bytecode, kind, salt);
     }
 
-    function _deploy(bytes memory input, DEPLOY_KIND kind, bytes32 salt) private returns (address addr) {
+    function _constructCall(bytes memory compressedBytecode) internal view returns(bytes memory){
+        return abi.encodePacked(IFactory.DEPLOY_KIND.CREATE, compressedBytecode);
+    }
+
+    function _constructCall(uint96 salt, bytes memory compressedBytecode) internal view returns(bytes memory){
+        return abi.encodePacked(IFactory.DEPLOY_KIND.CREATE2, salt, compressedBytecode);
+    }
+
+    function _deploy(bytes memory input, DEPLOY_KIND kind, uint96 salt) private returns (address addr) {
         IFactory factory = getFactory();
         uint256 fee = factory.calculateFee(input);
         if (kind == DEPLOY_KIND.CREATE) {
-            if (salt != bytes32(0)) revert InvalidSalt();
-            addr = factory.create(input);
+            if (salt != 0) revert InvalidSalt();
+            (bool success, bytes memory res) = address(factory).call(
+                _constructCall(input)
+            );
+            addr = abi.decode(res, (address));
         } else if (kind == DEPLOY_KIND.CREATE2) {
-            if (salt == bytes32(0)) revert InvalidSalt();
-            addr = factory.create2{value: fee}(input, salt);
-        } else if (kind == DEPLOY_KIND.CREATE2PROXY) {
-            if (salt == bytes32(0)) revert InvalidSalt();
-            addr = factory.create2Proxy{value: fee}(input, salt);
-        } else if (kind == DEPLOY_KIND.CREATE3) {
-            if (salt == bytes32(0)) revert InvalidSalt();
-            addr = factory.create3{value: fee}(input, salt);
+            if (salt == 0) revert InvalidSalt();
+            (bool success, bytes memory res) = address(factory).call(
+                _constructCall(salt, input)
+            );
+            addr = abi.decode(res, (address));
         }
         if (addr == address(0)) revert DeployError();
     }

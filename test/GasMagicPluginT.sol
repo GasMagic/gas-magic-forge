@@ -54,31 +54,10 @@ contract GasMagicPluginT is Test {
 
     function test_create2() external {
         for (uint256 i = 1; i <= 5; i++) {
-            bytes32 salt = bytes32(uint256(i));
+            uint96 salt = uint96(i);
             (address precalculated, uint256 l1GasCost) =
                 GasMagicPlugin.getCreate2Address(keccak256(type(Dull).creationCode), salt);
             address deployed = GasMagicPlugin.deploy(type(Dull).creationCode, GasMagicPlugin.DEPLOY_KIND.CREATE2, salt);
-            assertEq(deployed, precalculated);
-            _checkDull(deployed);
-        }
-    }
-
-    function test_create2Proxy() external {
-        for (uint256 i = 1; i <= 5; i++) {
-            bytes32 salt = bytes32(uint256(i));
-            (address precalculated, uint256 l1GasCost) = GasMagicPlugin.getCreate2Address(salt);
-            address deployed =
-                GasMagicPlugin.deploy(type(Dull).creationCode, GasMagicPlugin.DEPLOY_KIND.CREATE2PROXY, salt);
-            assertEq(deployed, precalculated);
-            _checkDull(deployed);
-        }
-    }
-
-    function test_create3() external {
-        for (uint256 i = 1; i <= 5; i++) {
-            bytes32 salt = bytes32(uint256(i));
-            (address precalculated, uint256 l1GasCost) = GasMagicPlugin.getCreate3Address(salt);
-            address deployed = GasMagicPlugin.deploy(type(Dull).creationCode, GasMagicPlugin.DEPLOY_KIND.CREATE3, salt);
             assertEq(deployed, precalculated);
             _checkDull(deployed);
         }
@@ -97,26 +76,31 @@ contract GasMagicPluginT is Test {
         }
     }
 
-    function _deploySalted(bytes memory initCode, bytes32 salt, address expected) internal {
+    function _deploySalted(bytes memory initCode, uint96 salt, address expected) internal {
         (address precalculated, uint256 l1GasCost) = factory.getCreate2Address(keccak256(initCode), salt);
         bytes memory compressed = GasMagicPlugin.encode(initCode);
         uint256 fee = factory.calculateFee(compressed);
-        address deployed = factory.create2{value: fee}(compressed, salt);
+        address deployed =
+            GasMagicPlugin.deploy(initCode, GasMagicPlugin.DEPLOY_KIND.CREATE2, salt);
         assertEq(deployed, precalculated);
         assertEq(deployed, expected);
     }
 
-    function test_brute() external {
-        (address addr, bytes32 salt, uint256 l1GasCost) =
-            GasMagicPlugin.bruteSalt(1e5, GasMagicPlugin.DEPLOY_KIND.CREATE2, keccak256(type(Dull).creationCode));
+    function test_fuzzBruteSalt() external {
+        (address addr, uint96 salt, uint256 l1GasCost) =
+            GasMagicPlugin.bruteSalt(1e5, keccak256(type(Dull).creationCode));
         _deploySalted(type(Dull).creationCode, salt, addr);
     }
 
-    function test_ERADICATE2() external {
+    function test_CREATE2CRUNCH() external {
+        assertEq(
+            keccak256(type(Dull).creationCode),
+            bytes32(0xb3baaad88c8b2051dfd3423b66eef1d55c801c50011da8e8db188e2155fd1105)
+        );
         _deploySalted(
             type(Dull).creationCode,
-            bytes32(0x6538ae543fc454c5ce6bbf2648b11835218beadbbf8628c7dba23d30b89737a1),
-            0x76Ba45002F244cB50E4B00f969c95bfE53006652
+            uint96(uint256(0x43d1f3475d8154512c000020)),
+            0xB00000818A96AcA7B900FD1de93041460CA7dEEb
         );
     }
 }
