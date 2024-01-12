@@ -131,7 +131,7 @@ library GasMagicPlugin {
 
     // @notice: for demonstration purpose only: forge using only one CPU core, so computation is slow.
     //          Also, gas limit is not infinity.
-    // @notice: for best performance use OpenCL GPU generator. E.g. <https://github.com/0age/create2crunch>
+    // @notice: for best performance use OpenCL GPU generator. E.g. <https://github.com/GasMagic/saltCalculator>
     // @dev: 1e6 iterations can brute 3 zero-bytes for ~30 seconds
     function _bruteSalt(uint256 iterations, bytes32 codeHash)
         private
